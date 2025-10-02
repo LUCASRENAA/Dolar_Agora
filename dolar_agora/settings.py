@@ -23,7 +23,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 import os
 
 try:
-    SECRET_KEY = os.environ["DJANGO_PROD_SECRET_KEY"]
+    SECRET_KEY = os.environ["SECRET_KEY"]
 except KeyError as e:
     raise RuntimeError("Could not find a SECRET_KEY in environment") from e
 
