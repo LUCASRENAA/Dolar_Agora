@@ -2,12 +2,12 @@
 
 🎧 **Música Recomendada:**  
 Para se concentrar na identificação e mitigação de riscos de segurança, ouça:  
-["Roundabout" — Ouça no YouTube](https://www.youtube.com/watch?v=cPCLFtxpadE)
+["Bôa - Duvet" — Ouça no YouTube](https://www.youtube.com/watch?v=Uoox9fpmDP0)
 
-![Thorfin](images/dio.png)
+![Thorfin](images/ichigo.png)
 
 ---
 
 ## Resumo das Mudanças
 
-Atualização da versão do django para a versão 4.2.25
+Secret Key vem agora da variavel de ambiente
