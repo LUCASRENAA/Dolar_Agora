@@ -1,2 +1,2 @@
-django==4.2.6
+django==4.2.25
 pycotacao==1.1
