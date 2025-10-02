@@ -1,1 +1,174 @@
-dolar
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dólar Agora | Cotação em Tempo Real</title>
+    <!-- Carregando Bootstrap 5 CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" xintegrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
+    <!-- Estilos customizados (opcional, para um toque extra) -->
+    <style>
+        body {
+            background: linear-gradient(135deg, #f0f8ff 0%, #dcdcdc 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: 'Inter', sans-serif;
+        }
+        .dolar-card {
+            max-width: 450px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+            border-radius: 15px;
+            transition: transform 0.3s ease-in-out;
+        }
+        .dolar-card:hover {
+            transform: translateY(-5px);
+        }
+        .currency-value {
+            font-size: 3.5rem;
+            font-weight: 700;
+            color: #0d6efd; /* Azul Bootstrap primário */
+        }
+        @media (max-width: 576px) {
+            .currency-value {
+                font-size: 2.5rem;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container py-5">
+        <div class="card dolar-card mx-auto text-center border-0">
+            <div class="card-header bg-primary text-white p-3 rounded-top-3">
+                <h5 class="mb-0">Dólar Comercial (USD/BRL)</h5>
+            </div>
+            <div class="card-body p-4">
+                <p class="text-muted mb-2">Cotação de Venda Atual</p>
+                
+                <div id="loading-state" class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">Carregando...</span>
+                </div>
+                
+                <!-- Valor Principal -->
+                <h1 class="currency-value mb-3" id="dolar-value">
+                    --,--
+                </h1>
+                
+                <p class="text-success fw-bold mt-3">
+                    <span id="pct-change"></span>
+                </p>
+
+                <p class="text-sm text-muted">
+                    Última Atualização: <span id="last-update">--:--</span>
+                </p>
+
+                <button class="btn btn-outline-primary btn-sm mt-3" onclick="fetchDolarRate()">
+                    Atualizar Agora
+                </button>
+            </div>
+            <div class="card-footer bg-light text-muted small rounded-bottom-3">
+                Fonte de Dados: AwesomeAPI
+            </div>
+        </div>
+    </div>
+
+    <!-- Carregando Bootstrap 5 JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" xintegrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
+
+    <script>
+        // Função utilitária para formatar a data
+        function formatTimestamp(timestamp) {
+            const date = new Date(timestamp * 1000);
+            return date.toLocaleString('pt-BR', { 
+                hour: '2-digit', 
+                minute: '2-digit', 
+                second: '2-digit'
+            });
+        }
+
+        // Função utilitária para formatar o valor monetário
+        function formatCurrency(value) {
+            return parseFloat(value).toLocaleString('pt-BR', {
+                style: 'currency',
+                currency: 'BRL',
+                minimumFractionDigits: 4 // Exibe 4 casas para maior precisão na cotação
+            });
+        }
+
+        // Função principal para buscar a cotação
+        async function fetchDolarRate() {
+            const valueElement = document.getElementById('dolar-value');
+            const updateElement = document.getElementById('last-update');
+            const loadingElement = document.getElementById('loading-state');
+            const changeElement = document.getElementById('pct-change');
+            
+            // 1. Mostrar estado de carregamento
+            valueElement.style.display = 'none';
+            loadingElement.style.display = 'block';
+            changeElement.textContent = 'Buscando dados...';
+            changeElement.classList.remove('text-success', 'text-danger');
+            changeElement.classList.add('text-muted');
+
+
+            try {
+                const API_URL = 'https://economia.awesomeapi.com.br/json/last/USD-BRL';
+                
+                const response = await fetch(API_URL);
+                if (!response.ok) {
+                    throw new Error(`Erro HTTP: ${response.status}`);
+                }
+
+                const data = await response.json();
+                const rateData = data['USDBRL'];
+
+                if (!rateData) {
+                    throw new Error('Dados de cotação não encontrados na resposta.');
+                }
+
+                const bid = rateData.bid; // Valor de Venda
+                const timestamp = rateData.timestamp;
+                const pctChange = parseFloat(rateData.pctChange);
+
+                // 2. Atualizar o DOM com os dados
+                valueElement.textContent = formatCurrency(bid);
+                updateElement.textContent = formatTimestamp(timestamp);
+                
+                // 3. Atualizar variação e cor
+                const formattedChange = pctChange.toFixed(2) + '%';
+                changeElement.textContent = `Variação 24h: ${formattedChange}`;
+                
+                if (pctChange > 0) {
+                    changeElement.classList.remove('text-muted', 'text-danger');
+                    changeElement.classList.add('text-success');
+                } else if (pctChange < 0) {
+                    changeElement.classList.remove('text-muted', 'text-success');
+                    changeElement.classList.add('text-danger');
+                } else {
+                    changeElement.classList.remove('text-success', 'text-danger');
+                    changeElement.classList.add('text-muted');
+                }
+
+            } catch (error) {
+                console.error("Erro ao buscar a cotação do Dólar:", error);
+                valueElement.textContent = "Erro na API";
+                updateElement.textContent = "Verifique a conexão";
+                changeElement.textContent = 'Falha ao carregar dados.';
+                changeElement.classList.remove('text-success', 'text-danger');
+                changeElement.classList.add('text-danger');
+
+
+            } finally {
+                // 4. Ocultar estado de carregamento
+                loadingElement.style.display = 'none';
+                valueElement.style.display = 'block';
+            }
+        }
+
+        // Carrega a cotação assim que a página é carregada
+        window.onload = fetchDolarRate;
+
+    </script>
+</body>
+</html>
