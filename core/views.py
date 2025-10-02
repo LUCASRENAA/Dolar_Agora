@@ -1,7 +1,7 @@
 from django.shortcuts import render
 import os
 
-def dolar_agora(request, ip):
+def dolar_agora(request):
     return render(request, 'core/dolar_agora.html')
 
 def home(request):
