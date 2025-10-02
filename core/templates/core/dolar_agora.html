@@ -6,7 +6,7 @@
     <title>Dólar Agora | Cotação em Tempo Real</title>
     <!-- Carregando Bootstrap 5 CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" xintegrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
-    <!-- Estilos customizados (opcional, para um toque extra) -->
+    <!-- Estilos customizados -->
     <style>
         body {
             background: linear-gradient(135deg, #f0f8ff 0%, #dcdcdc 100%);
@@ -47,21 +47,37 @@
             <div class="card-body p-4">
                 <p class="text-muted mb-2">Cotação de Venda Atual</p>
                 
-                <div id="loading-state" class="spinner-border text-primary" role="status">
+                <!-- Oculta o spinner e o valor inicial quando o Python fornece os dados -->
+                <div id="loading-state" class="spinner-border text-primary" role="status"
+                     {% if dolar_value %}style="display: none;"{% endif %}>
                     <span class="visually-hidden">Carregando...</span>
                 </div>
                 
-                <!-- Valor Principal -->
-                <h1 class="currency-value mb-3" id="dolar-value">
-                    --,--
+                <!-- Valor Principal: Usa o valor do backend Django ou placeholder -->
+                <h1 class="currency-value mb-3" id="dolar-value" 
+                    {% if not dolar_value %}style="display: none;"{% endif %}>
+                    {{ dolar_value|default:'--,--' }}
                 </h1>
                 
-                <p class="text-success fw-bold mt-3">
-                    <span id="pct-change"></span>
+                <!-- Mensagem de status / Variação -->
+                <p class="fw-bold mt-3 
+                    {% if error %}text-danger{% elif dolar_value %}text-success{% else %}text-muted{% endif %}"
+                   id="pct-change">
+                   {% if status_message %}
+                       {{ status_message }}
+                   {% else %}
+                       Carregando...
+                   {% endif %}
                 </p>
 
                 <p class="text-sm text-muted">
-                    Última Atualização: <span id="last-update">--:--</span>
+                    Última Atualização: <span id="last-update">
+                    {% if dolar_value %}
+                        Backend (Python)
+                    {% else %}
+                        --:--
+                    {% endif %}
+                    </span>
                 </p>
 
                 <button class="btn btn-outline-primary btn-sm mt-3" onclick="fetchDolarRate()">
@@ -69,7 +85,7 @@
                 </button>
             </div>
             <div class="card-footer bg-light text-muted small rounded-bottom-3">
-                Fonte de Dados: AwesomeAPI
+                Fonte de Dados: {% if error %}AwesomeAPI (Failover){% else %}pycotacao (Backend){% endif %}
             </div>
         </div>
     </div>
@@ -93,7 +109,7 @@
             return parseFloat(value).toLocaleString('pt-BR', {
                 style: 'currency',
                 currency: 'BRL',
-                minimumFractionDigits: 4 // Exibe 4 casas para maior precisão na cotação
+                minimumFractionDigits: 4
             });
         }
 
@@ -127,7 +143,7 @@
                     throw new Error('Dados de cotação não encontrados na resposta.');
                 }
 
-                const bid = rateData.bid; // Valor de Venda
+                const bid = rateData.bid; 
                 const timestamp = rateData.timestamp;
                 const pctChange = parseFloat(rateData.pctChange);
 
@@ -166,9 +182,16 @@
             }
         }
 
-        // Carrega a cotação assim que a página é carregada
+        // A lógica de failover do Django decide se chama o JS:
+        {% if error %}
+        window.onload = function() {
+            // Se o backend falhou (error=True), inicia o failover JavaScript
+            fetchDolarRate();
+        };
+        {% elif not dolar_value %}
+        // Se a view não passou valor, carrega o JS por padrão
         window.onload = fetchDolarRate;
-
+        {% endif %}
     </script>
 </body>
 </html>
