@@ -1,7 +1,9 @@
 from django.shortcuts import render
 from pycotacao import get_exchange_rates, CurrencyCodes
 import logging
-
+from .models import CotacaoDolar
+from datetime import timedelta
+from django.utils import timezone
 # Configura o logger para a view (ajuda a ver erros no console do Django)
 logger = logging.getLogger(__name__)
 
@@ -10,24 +12,47 @@ def home(request):
     return render(request, 'core/index.html')
 
 def dolar_agora_api(request):
-    """
-    Busca a cotação do Dólar usando a API pycotacao.
-    Retorna o valor para o template.
-    """
-    context = {}
-    
+    taxa_venda = None
+    context =  {}
+
     try:
-        # 1. Busca o objeto de cotação do Dólar (USD)
-        taxa_dolar_obj = get_exchange_rates(CurrencyCodes.USD)
+        # 1. Tenta buscar a cotação mais recente salva no banco de dados.
+        #    O método .first() retorna o objeto mais recente ou None.
+        ultima_cotacao = CotacaoDolar.objects.order_by('-data_registro').first()
+        TEMPO_CACHE = timedelta(minutes=1)
+        # O momento em que a cotação salvaria/buscou
+        momento_atual = timezone.now()
+        print("teste")
+        # 2. Verifica se a última cotação existe E se ela ainda é válida
+        if ultima_cotacao and (ultima_cotacao.data_registro + TEMPO_CACHE > momento_atual):
+            # COTAÇÃO VÁLIDA: Usa o valor do banco de dados (Cache HIT)
+            taxa_venda = ultima_cotacao.valor
+            context['status_message'] = "Cotação obtida do cache do Banco de Dados."
+        else:
+            # COTAÇÃO EXPIRADA OU INEXISTENTE: Chama a API (Cache MISS)
+            
+            # --- CHAMA API EXTERNA ---
+            taxa_dolar_obj = get_exchange_rates(CurrencyCodes.USD)
+            taxa_venda_api = taxa_dolar_obj.selling_rate
+            # -------------------------
+            
+            # Salva a nova cotação no banco de dados
+            CotacaoDolar.objects.create(
+                valor=taxa_venda_api,
+                fonte="pycotacao" # Opcional: use o campo fonte
+            )
+            
+            taxa_venda = taxa_venda_api
+            context['status_message'] = "Cotação atualizada, buscada da API externa."
         
-        # 2. Extrai o valor de venda (selling_rate)
-        # O valor de venda é o mais comum para cotações públicas.
-        taxa_venda = taxa_dolar_obj.selling_rate
-        
-        # 3. Formata e prepara o contexto para o template
-        context['dolar_value'] = f"R$ {taxa_venda:.4f}"
-        context['status_message'] = "Cotação obtida com sucesso via Backend (pycotacao)."
-        context['error'] = False # Não houve erro, desativa o failover JS
+        # 3. Prepara o contexto de resposta
+        if taxa_venda is not None:
+            context['dolar_value'] = f"R$ {taxa_venda:.4f}"
+            context['error'] = False
+        else:
+             # Caso a API tenha falhado, mas o cache também estava vazio
+            context['status_message'] = "Erro ao obter a cotação da API e cache vazio."
+            context['error'] = True
         
     except Exception as e:
         logger.error(f"Falha ao buscar cotação via pycotacao: {e}")
