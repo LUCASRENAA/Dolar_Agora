@@ -4,18 +4,21 @@ on:
   push:
     branches:
       - '*'
+permissions:
+  contents: read
+  security-events: write
 
 jobs:
   security:
-    name: Security Scan
+    name: Run Security Scans (Trivy + Bandit + ZAP)
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       - name: Set up Python
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v4
         with:
           python-version: 3.9
 
@@ -23,18 +26,122 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install bandit # Instala o bandit junto com as outras dependências
-  
-      
-      - name: Run Trivy vulnerability scanner in fs mode
+          pip install bandit
+
+      - name: Instalar jq
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+
+      # ---------------------- TRIVY ----------------------
+      - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@0.20.0
         with:
           scan-type: 'fs'
           scan-ref: '.'
-          
-      - name: Run Bandit
+          format: 'sarif'
+          limit-severities-for-sarif: false
+          output: 'trivy-results.sarif'
+
+    
+
+      - name: Upload Trivy SARIF results
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+
+      # ---------------------- BANDIT ----------------------
+      - name: Run Bandit scan
         run: |
-          bandit -r . || true 
+          bandit -r . -f json -o bandit.json || true
+
+      - name: Convert Bandit JSON to SARIF
+        run: |
+          python scripts/bandit_to_sarif.py
+
+      - name: Upload Bandit SARIF results
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: bandit-results.sarif
+      # ---------------------- TinyLlama ----------------------
+      - name: Remover versões conflitantes do Docker
+        run: |
+          sudo apt-get remove --purge containerd containerd.io || true
+          sudo apt-get update
+
+      - name: Instalar Docker e Docker Compose
+        run: |
+          sudo apt-get install -y apt-transport-https ca-certificates curl software-properties-common
+          curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+          sudo sh -c "echo 'deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable' > /etc/apt/sources.list.d/docker.list"
+          sudo apt-get update
+          sudo apt-get install -y docker-ce docker-ce-cli containerd.io
+          sudo curl -L "https://github.com/docker/compose/releases/download/$(curl -s https://api.github.com/repos/docker/compose/releases/latest | jq -r .tag_name)/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+          sudo chmod +x /usr/local/bin/docker-compose
+
+      - name: Configurar Docker
+        uses: docker/setup-buildx-action@v2
+
+      - name: Build Docker Image (caso necessário)
+        run: |
+          docker-compose -f docker-compose.yml build
+
+      - name: Iniciar Containers
+        run: |
+          docker-compose -f docker-compose.yml up -d
+          sudo docker exec ollama ollama pull tinyllama
+
+      - name: Aguardar containers subirem
+        run: |
+          sleep 15  # Aguarda 15 segundos para garantir que o Ollama esteja inicializado
+
+      - name: Enviar resultados Trivy para TinyLlama
+        run: |
+          if [ -f "trivy-results.sarif" ]; then
+            echo "📄 Arquivo trivy-results.sarif encontrado. Enviando para análise com TinyLlama..."
+            
+            # Cria prompt concatenando explicação com o conteúdo SARIF como string JSON
+            prompt=$(jq -Rs --arg prefix "Aqui estão os resultados do Trivy em formato SARIF. Analise e forneça um resumo e recomendações de segurança: " '$prefix + .' < trivy-results.sarif)
+
+            # Faz a requisição
+            response=$(curl -s -X POST http://localhost:11399/api/generate \
+              -H "Content-Type: application/json" \
+              -d "{\"model\": \"tinyllama\", \"stream\": false, \"prompt\": ${prompt}}")
+            
+            echo "🧠 Resposta completa da API:"
+            echo "$response" | jq
+
+            echo "📝 Resumo extraído:"
+            echo "$response" | jq -r '.response // .error'
+          else
+            echo "⚠️ Arquivo trivy-results.sarif não encontrado. Pulando etapa."
+          fi
+
+
+
+      - name: Enviar resultados Bandit para TinyLlama
+        run: |
+          if [ -f "bandit-results.sarif" ]; then
+            echo "📄 Arquivo bandit-results.sarif encontrado. Enviando para análise com TinyLlama..."
+            
+            prompt=$(jq -Rs --arg prefix "You are a security analyst. Here are the Bandit scan results in SARIF format. Please review the findings and provide a security-focused summary along with specific recommendations or mitigations. Indicate whether each finding is valid or a false positive: " '$prefix + .' < bandit-results.sarif)
+
+            response=$(curl -s -X POST http://localhost:11399/api/generate \
+              -H "Content-Type: application/json" \
+              -d "{\"model\": \"tinyllama\", \"stream\": false, \"prompt\": ${prompt}}")
+
+            echo "🧠 Resposta completa da API:"
+            echo "$response" | jq
+
+            echo "📝 Resumo extraído:"
+            echo "$response" | jq -r '.response // .error'
+          else
+            echo "⚠️ Arquivo bandit-results.sarif não encontrado. Pulando etapa."
+          fi
+
+      - name: Parar Containers
+        run: |
+          docker-compose -f docker-compose.yml down
 
       - name: Start Django development server
         run: |
