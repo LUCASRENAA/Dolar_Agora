@@ -1,0 +1,79 @@
+{% load static %}
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Variação Histórica do Dólar</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@3.7.1/dist/chart.min.js"></script>
+    <style>
+        /* Define o container para ocupar a maior parte da tela */
+        #dolarChartContainer {
+            width: 90%; 
+            height: 60vh; /* 60% da altura da viewport para dar espaço ao título */
+            margin: 20px auto; 
+        }
+    </style>
+</head>
+<body>
+    <h1>Gráfico de Variação do Dólar ({{ quantidade_registros }} Registros)</h1>
+    
+    <div id="dolarChartContainer">
+        <canvas id="dolarChart"></canvas>
+    </div>
+
+    <script>
+        // Os dados injetados pelo Django
+        // O filtro '|safe' é crucial para as strings de data/label
+        const labels = {{ datas_labels|safe }};
+        const dataValues = {{ valores_data }};
+        
+        // Configuração do Chart.js
+        const data = {
+            labels: labels,
+            datasets: [{
+                label: 'Cotação do Dólar (R$)',
+                data: dataValues,
+                borderColor: 'rgb(0, 123, 255)', // Azul
+                backgroundColor: 'rgba(0, 123, 255, 0.1)',
+                fill: false,
+                tension: 0.2 // Suaviza a linha
+            }]
+        };
+
+        const config = {
+            type: 'line', 
+            data: data,
+            options: {
+                responsive: true,
+                // Permite que o gráfico use toda a largura e altura definida pelo container
+                maintainAspectRatio: false, 
+                plugins: {
+                    title: {
+                        display: true,
+                        text: 'Variação da Cotação ao Longo do Tempo'
+                    }
+                },
+                scales: {
+                    x: {
+                        title: {
+                            display: true,
+                            text: 'Data e Hora do Registro'
+                        }
+                    },
+                    y: {
+                        title: {
+                            display: true,
+                            text: 'Valor (R$)'
+                        },
+                        beginAtZero: false // Crucial para gráficos de variação de preço
+                    }
+                }
+            }
+        };
+
+        // Renderiza o gráfico
+        const ctx = document.getElementById('dolarChart').getContext('2d');
+        new Chart(ctx, config);
+
+    </script>
+</body>
+</html>
