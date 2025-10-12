@@ -65,4 +65,5 @@ As ameaças mapeadas priorizam a disponibilidade da cotação e a integridade da
 ### Imagem da arquitetura do DFD da aplicação
 ![DFD](images/threat_modeling/image.png)
 
+
 Utilize estes materiais para entender os riscos do sistema, planejar controles e fortalecer a segurança do projeto Dolar Agora.

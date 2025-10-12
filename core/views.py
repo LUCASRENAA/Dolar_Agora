@@ -70,3 +70,36 @@ def dolar_agora(request):
 
 def home(request):
     return render(request, 'core/index.html')
+
+
+def grafico_dolar_view(request):
+    """
+    Busca todas as cotações salvas e prepara os dados para o gráfico.
+    """
+    
+    # 1. Busca todos os objetos de cotação, ordenados do mais antigo ao mais novo
+    historico_cotacoes = CotacaoDolar.objects.all().order_by('data_registro')
+
+    # 2. Inicializa as listas que serão usadas como Labels (Datas) e Dados (Valores)
+    datas = []
+    valores = []
+
+    # 3. Itera sobre o histórico para popular as listas
+    for cotacao in historico_cotacoes:
+        # Formata a data para um formato legível no gráfico (ex: 2025-10-06 14:30)
+        data_formatada = cotacao.data_registro.strftime('%Y-%m-%d %H:%M')
+        
+        # O valor é convertido para float para ser melhor manipulado pelo JS
+        valor_float = float(cotacao.valor)
+        
+        datas.append(data_formatada)
+        valores.append(valor_float)
+
+    # 4. Cria o contexto para enviar os dados ao template
+    contexto = {
+        'datas_labels': datas,      # Lista de datas/horários
+        'valores_data': valores,    # Lista dos valores do Dólar
+        'quantidade_registros': historico_cotacoes.count()
+    }
+
+    return render(request, 'core/grafico_dolar.html', contexto)
