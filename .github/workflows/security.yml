@@ -82,13 +82,10 @@ jobs:
       - name: Configurar Docker
         uses: docker/setup-buildx-action@v2
 
-      - name: Build Docker Image (caso necessário)
-        run: |
-          docker-compose -f docker-compose.yml build
+
 
       - name: Iniciar Containers
         run: |
-          docker-compose -f docker-compose.yml up -d
           sudo docker exec ollama ollama pull tinyllama
 
       - name: Aguardar containers subirem
