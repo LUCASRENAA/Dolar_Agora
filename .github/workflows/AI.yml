@@ -77,39 +77,38 @@ jobs:
 
       # Etapa 4: Analisar findings com TinyLlama
       - name: Analisar findings com TinyLlama e Comentar no PR
-        # Esta etapa requer 'jq' e 'curl' (já instalados no runner)
+        # Esta etapa foi refatorada para remover a função Bash aninhada, o que deve resolver o erro de EOF.
         run: |
-          analyze_findings() {
-            local file="findings/code-scanning.json"
-            local type="Code Scanning"
-            
-            echo "🔎 Analisando findings de ${type}..."
-            
-            # Conta o número de findings
-            count=$(jq length "$file")
+          file="findings/code-scanning.json"
+          type="Code Scanning"
+          
+          echo "🔎 Analisando findings de ${type}..."
+          
+          # Conta o número de findings
+          count=$(jq length "$file")
 
-            if [ "$count" -eq 0 ]; then
-              echo "✅ Nenhum finding de ${type} encontrado."
-              return
-            fi
-            
-            # Loop por cada finding encontrado
-            for i in $(seq 0 $(($count - 1))); do
-              finding=$(jq -r ".[$i]" "$file")
+          if [ "$count" -eq 0 ]; then
+            echo "✅ Nenhum finding de ${type} encontrado."
+            exit 0
+          fi
+          
+          # Loop por cada finding encontrado
+          for i in $(seq 0 $(($count - 1))); do
+            finding=$(jq -r ".[$i]" "$file")
 
-              # Extração de campos (ajustei para ser mais robusto com os caminhos do jq)
-              number=$(echo "$finding" | jq -r '.number // "N/A"')
-              created_at=$(echo "$finding" | jq -r '.created_at // "N/A"')
-              description=$(echo "$finding" | jq -r '.rule.description // "N/A"')
-              severity=$(echo "$finding" | jq -r '.rule.severity // "N/A"')
-              location_path=$(echo "$finding" | jq -r '.most_recent_instance.location.path // "N/A"')
-              location_line=$(echo "$finding" | jq -r '.most_recent_instance.location.start_line // "N/A"')
-              message_text=$(echo "$finding" | jq -r '.most_recent_instance.message.text // "N/A"')
-              html_url=$(echo "$finding" | jq -r '.html_url // "N/A"')
-              help_uri=$(echo "$finding" | jq -r '.rule.help_uri // "N/A"')
-              
-              # Monta o prompt
-              prompt="A vulnerability was found in the repository's Code Scanning. Below are the details:
+            # Extração de campos (ajustei para ser mais robusto com os caminhos do jq)
+            number=$(echo "$finding" | jq -r '.number // "N/A"')
+            created_at=$(echo "$finding" | jq -r '.created_at // "N/A"')
+            description=$(echo "$finding" | jq -r '.rule.description // "N/A"')
+            severity=$(echo "$finding" | jq -r '.rule.severity // "N/A"')
+            location_path=$(echo "$finding" | jq -r '.most_recent_instance.location.path // "N/A"')
+            location_line=$(echo "$finding" | jq -r '.most_recent_instance.location.start_line // "N/A"')
+            message_text=$(echo "$finding" | jq -r '.most_recent_instance.message.text // "N/A"')
+            html_url=$(echo "$finding" | jq -r '.html_url // "N/A"')
+            help_uri=$(echo "$finding" | jq -r '.rule.help_uri // "N/A"')
+            
+            # Monta o prompt
+            prompt="A vulnerability was found in the repository's Code Scanning. Below are the details:
 
 - Finding ID: $number
 - Created At: $created_at
@@ -123,49 +122,51 @@ Do you consider this a false positive? Justify your answer briefly in Portuguese
 
 For reference, here is the rule documentation: $help_uri
 GitHub Finding Link: $html_url"
-              
-              # Escapa o prompt para ser um JSON string válido
-              escaped_prompt=$(jq -Rs <<< "$prompt")
+            
+            # Escapa o prompt para ser um JSON string válido
+            escaped_prompt=$(printf '%s' "$prompt" | jq -Rs .)
 
-              # Tenta o curl, usando a porta padrão 11434
-              # Adiciona um retry simples com loop
-              MAX_RETRIES=3
-              for attempt in $(seq 1 $MAX_RETRIES); do
-                  echo "🔌 Tentativa $attempt de conexão com Ollama..."
-                  response=$(curl -s -X POST http://localhost:11434/api/generate \
-                    -H "Content-Type: application/json" \
-                    -d "{\"model\": \"tinyllama\", \"stream\": false, \"prompt\": $escaped_prompt}" \
-                    --write-out "%{http_code}" \
-                    --output response.json)
-                  
-                  HTTP_CODE="${response: -3}"
-                  
-                  if [ "$HTTP_CODE" -eq 200 ]; then
-                      echo "✅ Sucesso na conexão com Ollama."
-                      break
-                  fi
-                  
-                  echo "❌ Ollama retornou código HTTP $HTTP_CODE. Tentando novamente em 5 segundos..."
-                  sleep 5
-                  
-                  if [ "$attempt" -eq "$MAX_RETRIES" ]; then
-                      echo "🚨 Falha ao conectar ao Ollama após $MAX_RETRIES tentativas."
-                      result="Não foi possível obter a análise da IA devido a falha de conexão com o TinyLlama."
-                      break
-                  fi
-              done
+            # Tenta o curl, usando a porta padrão 11434
+            MAX_RETRIES=3
+            HTTP_CODE="0"
+            result=""
 
-              # Se o curl foi bem-sucedido (código 200), extrai a resposta
-              if [ "$HTTP_CODE" -eq 200 ]; then
-                  result=$(jq -r '.response // .error // "Resposta da IA em formato inesperado."' response.json)
-              fi
+            for attempt in $(seq 1 $MAX_RETRIES); do
+                echo "🔌 Tentativa $attempt de conexão com Ollama..."
+                response=$(curl -s -X POST http://localhost:11434/api/generate \
+                  -H "Content-Type: application/json" \
+                  -d "{\"model\": \"tinyllama\", \"stream\": false, \"prompt\": $escaped_prompt}" \
+                  --write-out "%{http_code}" \
+                  --output response.json)
+                
+                HTTP_CODE="${response: -3}"
+                
+                if [ "$HTTP_CODE" -eq 200 ]; then
+                    echo "✅ Sucesso na conexão com Ollama."
+                    break
+                fi
+                
+                echo "❌ Ollama retornou código HTTP $HTTP_CODE. Tentando novamente em 5 segundos..."
+                sleep 5
+                
+                if [ "$attempt" -eq "$MAX_RETRIES" ]; then
+                    echo "🚨 Falha ao conectar ao Ollama após $MAX_RETRIES tentativas."
+                    result="Não foi possível obter a análise da IA devido a falha de conexão com o TinyLlama."
+                    break
+                fi
+            done
 
-              echo "🧠 Resultado da IA para Finding #$number: $result"
-              
-              # Comenta no Pull Request
-              if [[ "${{ github.event_name }}" == "pull_request_target" ]]; then
-                # Usa um bloco EOF para montar o corpo do comentário em Markdown (usando <<-EOF para permitir indentação)
-                comment_body=$(cat <<-EOF
+            # Se o curl foi bem-sucedido (código 200), extrai a resposta
+            if [ "$HTTP_CODE" -eq 200 ]; then
+                result=$(jq -r '.response // .error // "Resposta da IA em formato inesperado."' response.json)
+            fi
+
+            echo "🧠 Resultado da IA para Finding #$number: $result"
+            
+            # Comenta no Pull Request
+            if [[ "${{ github.event_name }}" == "pull_request_target" ]]; then
+              # Define o corpo do comentário usando um heredoc, agora fora de uma função
+              comment_body=$(cat <<EOF_COMMENT
 ### 🤖 Análise Automática da TinyLlama (Code Scanning)
 
 **Finding ID:** #$number
@@ -181,29 +182,27 @@ $result
 \`\`\`
 
 [🔗 Ver finding no GitHub]($html_url)
-EOF
-                )
+EOF_COMMENT
+)
 
-                # Escapa o corpo do comentário para ser injetado no payload JSON do GitHub API
-                escaped_body=$(printf '%s' "$comment_body" | jq -Rs .)
+              # Escapa o corpo do comentário para ser injetado no payload JSON do GitHub API
+              escaped_body=$(printf '%s' "$comment_body" | jq -Rs .)
 
-                # Envia o comentário para o Pull Request
-                curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-                    -H "Content-Type: application/json" \
-                    -X POST \
-                    -d "{\"body\": $escaped_body}" \
-                    "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments"
-                
-                echo "📝 Comentário postado no PR #${{ github.event.pull_request.number }}"
-
-              else
-                echo "⏭️ Ignorando postagem de comentário. O workflow não está rodando em um evento pull_request_target."
-              fi
+              # Envia o comentário para o Pull Request
+              curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+                  -H "Content-Type: application/json" \
+                  -X POST \
+                  -d "{\"body\": $escaped_body}" \
+                  "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments"
               
-            done
-          }
+              echo "📝 Comentário postado no PR #${{ github.event.pull_request.number }}"
 
-          analyze_findings
+            else
+              echo "⏭️ Ignorando postagem de comentário. O workflow não está rodando em um evento pull_request_target."
+            fi
+            
+          done
+
 
       # Etapa 5: Limpar o ambiente Ollama
       - name: Parar e remover ambiente TinyLlama
