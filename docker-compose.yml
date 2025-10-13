@@ -1,0 +1,26 @@
+version: '3.9'
+
+services:
+  # Django App
+  web:
+    build: .
+    container_name: django-app
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+    depends_on:
+      - ollama
+
+  # Ollama
+  ollama:
+    image: ollama/ollama
+    container_name: ollama
+    ports:
+      - "11399:11434"  # <-- Alterado aqui
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+
+volumes:
+  ollama_data:
