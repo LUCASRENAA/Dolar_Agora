@@ -77,7 +77,7 @@ jobs:
 
       # Etapa 4: Analisar findings com TinyLlama
       - name: Analisar findings com TinyLlama e Comentar no PR
-        # Esta etapa foi refatorada para remover a função Bash aninhada, o que deve resolver o erro de EOF.
+        # Substitui a sintaxe HERE-DOC por criação de arquivos temporários para maior robustez
         run: |
           file="findings/code-scanning.json"
           type="Code Scanning"
@@ -107,26 +107,28 @@ jobs:
             html_url=$(echo "$finding" | jq -r '.html_url // "N/A"')
             help_uri=$(echo "$finding" | jq -r '.rule.help_uri // "N/A"')
             
-            # Monta o prompt
-            prompt="A vulnerability was found in the repository's Code Scanning. Below are the details:
-
-- Finding ID: $number
-- Created At: $created_at
-- Description: $description
-- Severity: $severity
-- File Path: $location_path
-- Line Number: $location_line
-- Message: $message_text
-
-Do you consider this a false positive? Justify your answer briefly in Portuguese, focusing on the file and line number provided.
-
-For reference, here is the rule documentation: $help_uri
-GitHub Finding Link: $html_url"
+            # --- 1. Criar e preparar o Prompt ---
+            # Cria o arquivo de prompt em formato multi-linha (substituindo HERE-DOC)
+            # Nota: Usamos echo -e e \n para quebrar linhas e evitar a sintaxe de heredoc.
+            printf "A vulnerability was found in the repository's Code Scanning. Below are the details:\n\n" > prompt.txt
+            printf "- Finding ID: %s\n" "$number" >> prompt.txt
+            printf "- Created At: %s\n" "$created_at" >> prompt.txt
+            printf "- Description: %s\n" "$description" >> prompt.txt
+            printf "- Severity: %s\n" "$severity" >> prompt.txt
+            printf "- File Path: %s\n" "$location_path" >> prompt.txt
+            printf "- Line Number: %s\n" "$location_line" >> prompt.txt
+            printf "- Message: %s\n\n" "$message_text" >> prompt.txt
+            printf "Do you consider this a false positive? Justify your answer briefly in Portuguese, focusing on the file and line number provided.\n\n" >> prompt.txt
+            printf "For reference, here is the rule documentation: %s\n" "$help_uri" >> prompt.txt
+            printf "GitHub Finding Link: %s" "$html_url" >> prompt.txt
             
-            # Escapa o prompt para ser um JSON string válido
-            escaped_prompt=$(printf '%s' "$prompt" | jq -Rs .)
-
-            # Tenta o curl, usando a porta padrão 11434
+            # Escapa o conteúdo do prompt para JSON e salva no arquivo final
+            escaped_prompt=$(jq -Rs . prompt.txt)
+            
+            # Monta o payload JSON para o cURL (a chave 'prompt' usará o conteúdo escapado)
+            echo "{\"model\": \"tinyllama\", \"stream\": false, \"prompt\": $escaped_prompt}" > payload.json
+            
+            # --- 2. Chamar a API do Ollama com retries ---
             MAX_RETRIES=3
             HTTP_CODE="0"
             result=""
@@ -135,7 +137,7 @@ GitHub Finding Link: $html_url"
                 echo "🔌 Tentativa $attempt de conexão com Ollama..."
                 response=$(curl -s -X POST http://localhost:11434/api/generate \
                   -H "Content-Type: application/json" \
-                  -d "{\"model\": \"tinyllama\", \"stream\": false, \"prompt\": $escaped_prompt}" \
+                  -d @payload.json \
                   --write-out "%{http_code}" \
                   --output response.json)
                 
@@ -163,36 +165,31 @@ GitHub Finding Link: $html_url"
 
             echo "🧠 Resultado da IA para Finding #$number: $result"
             
-            # Comenta no Pull Request
+            # --- 3. Comentar no Pull Request (também sem HERE-DOC) ---
             if [[ "${{ github.event_name }}" == "pull_request_target" ]]; then
-              # Define o corpo do comentário usando um heredoc, agora fora de uma função
-              comment_body=$(cat <<EOF_COMMENT
-### 🤖 Análise Automática da TinyLlama (Code Scanning)
-
-**Finding ID:** #$number
-**Severidade:** $severity
-**Caminho:** \`$location_path:$location_line\`
-
-**Descrição do Finding:**
-> $description
-
-**Resultado da IA:**
-\`\`\`
-$result
-\`\`\`
-
-[🔗 Ver finding no GitHub]($html_url)
-EOF_COMMENT
-)
-
+              
+              # Cria o corpo do comentário em Markdown em um arquivo temporário
+              printf "### 🤖 Análise Automática da TinyLlama (Code Scanning)\n\n" > comment_body.md
+              printf "**Finding ID:** #%s\n" "$number" >> comment_body.md
+              printf "**Severidade:** %s\n" "$severity" >> comment_body.md
+              printf "**Caminho:** \`%s:%s\`\n\n" "$location_path" "$location_line" >> comment_body.md
+              printf "**Descrição do Finding:**\n" >> comment_body.md
+              printf "> %s\n\n" "$description" >> comment_body.md
+              printf "**Resultado da IA:**\n" >> comment_body.md
+              printf "\`\`\`\n%s\n\`\`\`\n\n" "$result" >> comment_body.md
+              printf "[🔗 Ver finding no GitHub](%s)\n" "$html_url" >> comment_body.md
+              
               # Escapa o corpo do comentário para ser injetado no payload JSON do GitHub API
-              escaped_body=$(printf '%s' "$comment_body" | jq -Rs .)
+              escaped_body=$(jq -Rs . comment_body.md)
+
+              # Monta o payload JSON para o cURL (a chave 'body' usará o conteúdo escapado)
+              echo "{\"body\": $escaped_body}" > comment_payload.json
 
               # Envia o comentário para o Pull Request
               curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
                   -H "Content-Type: application/json" \
                   -X POST \
-                  -d "{\"body\": $escaped_body}" \
+                  -d @comment_payload.json \
                   "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments"
               
               echo "📝 Comentário postado no PR #${{ github.event.pull_request.number }}"
