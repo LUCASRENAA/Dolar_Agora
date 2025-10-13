@@ -1,2 +1,3 @@
 django==3.2.6
-pycotacao==1.1
+python-dateutil>=2.8.2
+pycotacao
