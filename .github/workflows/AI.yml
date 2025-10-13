@@ -111,19 +111,19 @@ jobs:
               # Monta o prompt
               prompt="A vulnerability was found in the repository's Code Scanning. Below are the details:
 
-              - Finding ID: $number
-              - Created At: $created_at
-              - Description: $description
-              - Severity: $severity
-              - File Path: $location_path
-              - Line Number: $location_line
-              - Message: $message_text
+            - Finding ID: $number
+            - Created At: $created_at
+            - Description: $description
+            - Severity: $severity
+            - File Path: $location_path
+            - Line Number: $location_line
+            - Message: $message_text
 
               Do you consider this a false positive? Justify your answer briefly in Portuguese, focusing on the file and line number provided.
 
               For reference, here is the rule documentation: $help_uri
               GitHub Finding Link: $html_url"
-              
+                          
               # Escapa o prompt para ser um JSON string válido
               escaped_prompt=$(jq -Rs <<< "$prompt")
 
@@ -164,8 +164,8 @@ jobs:
               
               # Comenta no Pull Request
               if [[ "${{ github.event_name }}" == "pull_request_target" ]]; then
-                # Usa um bloco EOF para montar o corpo do comentário em Markdown
-                comment_body=$(cat <<EOF
+                # Usa um bloco EOF para montar o corpo do comentário em Markdown (usando <<-EOF para permitir indentação)
+                comment_body=$(cat <<-EOF
                 ### 🤖 Análise Automática da TinyLlama (Code Scanning)
 
                 **Finding ID:** #$number
