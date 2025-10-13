@@ -30,7 +30,7 @@ jobs:
       # Usamos o SHA do HEAD do PR para checkout, garantindo a segurança ao usar pull_request_target
       - name: Checkout repositório com segurança
         uses: actions/checkout@v4
-        with:
+        with
           # É crucial verificar o código que está sendo proposto
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 1
@@ -111,19 +111,19 @@ jobs:
               # Monta o prompt
               prompt="A vulnerability was found in the repository's Code Scanning. Below are the details:
 
-            - Finding ID: $number
-            - Created At: $created_at
-            - Description: $description
-            - Severity: $severity
-            - File Path: $location_path
-            - Line Number: $location_line
-            - Message: $message_text
+- Finding ID: $number
+- Created At: $created_at
+- Description: $description
+- Severity: $severity
+- File Path: $location_path
+- Line Number: $location_line
+- Message: $message_text
 
-              Do you consider this a false positive? Justify your answer briefly in Portuguese, focusing on the file and line number provided.
+Do you consider this a false positive? Justify your answer briefly in Portuguese, focusing on the file and line number provided.
 
-              For reference, here is the rule documentation: $help_uri
-              GitHub Finding Link: $html_url"
-                          
+For reference, here is the rule documentation: $help_uri
+GitHub Finding Link: $html_url"
+              
               # Escapa o prompt para ser um JSON string válido
               escaped_prompt=$(jq -Rs <<< "$prompt")
 
@@ -166,23 +166,23 @@ jobs:
               if [[ "${{ github.event_name }}" == "pull_request_target" ]]; then
                 # Usa um bloco EOF para montar o corpo do comentário em Markdown (usando <<-EOF para permitir indentação)
                 comment_body=$(cat <<-EOF
-                ### 🤖 Análise Automática da TinyLlama (Code Scanning)
+### 🤖 Análise Automática da TinyLlama (Code Scanning)
 
-                **Finding ID:** #$number
-                **Severidade:** $severity
-                **Caminho:** \`$location_path:$location_line\`
+**Finding ID:** #$number
+**Severidade:** $severity
+**Caminho:** \`$location_path:$location_line\`
 
-                **Descrição do Finding:**
-                > $description
+**Descrição do Finding:**
+> $description
 
-                **Resultado da IA:**
-                \`\`\`
-                $result
-                \`\`\`
+**Resultado da IA:**
+\`\`\`
+$result
+\`\`\`
 
-                [🔗 Ver finding no GitHub]($html_url)
-                EOF
-                                )
+[🔗 Ver finding no GitHub]($html_url)
+EOF
+                )
 
                 # Escapa o corpo do comentário para ser injetado no payload JSON do GitHub API
                 escaped_body=$(printf '%s' "$comment_body" | jq -Rs .)
