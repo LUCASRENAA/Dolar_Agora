@@ -128,18 +128,19 @@ jobs:
                 echo "🧠 Resultado da IA: $result"
                 # Se estiver rodando num Pull Request, comente a resposta da IA
                 if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-                  comment_body=$(cat <<'EOF'
+                  comment_body=$(cat <<EOF
                   ### 🤖 Análise Automática da TinyLlama
 
-                  **Finding #'"$number"'**  
-                  **Severidade:** '"$severity"'  
-                  **Caminho:** \`'"$location_path"':'"$location_line"'\`  
+                  **Finding #$number**  
+                  **Severidade:** $severity  
+                  **Caminho:** \`$location_path:$location_line\`  
 
                   **Resultado da IA:**  
-                  '"$result"'
+                  $result
 
-                  [🔗 Ver finding no GitHub]('"$html_url"')
+                  [🔗 Ver finding no GitHub]($html_url)
                   EOF
+                  )
                   )
                   # Escapar com jq para evitar problemas de JSON malformado
                   escaped_body=$(printf '%s' "$comment_body" | jq -Rs .)
