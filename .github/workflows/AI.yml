@@ -1,0 +1,178 @@
+name: Analyze GitHub Security Findings
+
+on:
+  push:
+    branches:
+      - main
+      - Dev
+  pull_request_target:
+    types: [opened, reopened, synchronize]
+    branches:
+      - main
+      - Dev
+
+permissions:
+  contents: read
+  pull-requests: write
+  security-events: read
+
+jobs:
+  analyze-findings:
+    name: Analisar Findings de Segurança com TinyLlama
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repositório com segurança
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
+
+      - name: Remover versões conflitantes do Docker
+        run: |
+          sudo apt-get remove --purge containerd containerd.io || true
+          sudo apt-get update
+
+      - name: Instalar Docker e Docker Compose
+        run: |
+          sudo apt-get install -y apt-transport-https ca-certificates curl software-properties-common
+          curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+          echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list
+          sudo apt-get update
+          sudo apt-get install -y docker-ce docker-ce-cli containerd.io
+          sudo curl -L "https://github.com/docker/compose/releases/download/$(curl -s https://api.github.com/repos/docker/compose/releases/latest | jq -r .tag_name)/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+          sudo chmod +x /usr/local/bin/docker-compose
+
+      - name: Configurar Docker
+        uses: docker/setup-buildx-action@v2
+
+      - name: Build Docker Image (caso necessário)
+        run: |
+          docker-compose -f docker-compose.yml build
+
+      - name: Iniciar Containers
+        run: |
+          docker-compose -f docker-compose.yml up -d
+          sudo docker exec ollama ollama pull tinyllama
+
+      - name: Baixar findings de segurança
+        run: |
+          mkdir -p findings
+
+          curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            https://api.github.com/repos/${{ github.repository }}/code-scanning/alerts \
+            -o findings/code-scanning.json
+
+          curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            https://api.github.com/repos/${{ github.repository }}/secret-scanning/alerts \
+            -o findings/secrets.json || echo "Erro ao baixar Secret Scanning"
+
+          curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            https://api.github.com/repos/${{ github.repository }}/dependabot/alerts \
+            -o findings/dependabot.json || echo "Erro ao baixar Dependabot"
+
+      - name: Analisar findings com TinyLlama
+        run: |
+          analyze_findings() {
+            local type="$1"
+            local file="findings/${type}.json"
+            echo "🔎 Analisando findings de ${type}..."
+            count=$(jq length "$file")
+
+            if [ "$count" -eq 0 ]; then
+              echo "✅ Nenhum finding de ${type} encontrado."
+              return
+            fi
+
+            for i in $(seq 0 $(($count - 1))); do
+              finding=$(jq -r ".[$i]" "$file")
+
+              number=$(echo "$finding" | jq -r '.number')
+              created_at=$(echo "$finding" | jq -r '.created_at')
+              updated_at=$(echo "$finding" | jq -r '.updated_at')
+              description=$(echo "$finding" | jq -r '.rule.description')
+              severity=$(echo "$finding" | jq -r '.rule.severity')
+              location_path=$(echo "$finding" | jq -r '.most_recent_instance.location.path')
+              location_line=$(echo "$finding" | jq -r '.most_recent_instance.location.start_line')
+              message_text=$(echo "$finding" | jq -r '.most_recent_instance.message.text')
+              html_url=$(echo "$finding" | jq -r '.html_url')
+              help_uri=$(echo "$finding" | jq -r '.rule.help_uri')
+
+              prompt="A vulnerability was found in the repository. Below are the details:
+
+              - Finding ID: $number
+              - Created At: $created_at
+              - Updated At: $updated_at
+              - Description: $description
+              - Severity: $severity
+              - File Path: $location_path
+              - Line Number: $location_line
+              - Message: $message_text
+
+              Do you consider this a false positive? Justify your answer briefly.
+
+              For reference, here is the rule documentation: $help_uri  
+              GitHub Finding Link: $html_url"
+
+              escaped_prompt=$(jq -Rs <<< "$prompt")
+
+              response=$(curl -s -X POST http://localhost:11399/api/generate \
+                -H "Content-Type: application/json" \
+                -d "{\"model\": \"tinyllama\", \"stream\": false, \"prompt\": $escaped_prompt}" || echo "erro")
+
+              result=$(echo "$response" | jq -r '.response // .error')
+
+              if [ "$result" == "null" ] || [ "$result" == "erro" ]; then
+                echo "⚠️ Erro na resposta da IA: $response"
+              else
+                echo "🔍 Exibindo conteúdo do PR Diff:"
+                cat pr.diff  # Exibe o conteúdo do diff para diagnóstico
+                echo "🧠 Resultado da IA: $result"
+                # Se estiver rodando num Pull Request, comente a resposta da IA
+                if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+                  comment_body="### 🤖 Análise Automática da TinyLlama
+
+                  **Finding #$number**  
+                  **Severidade:** $severity  
+                  **Caminho:** \`$location_path:$location_line\`  
+
+                  **Resultado da IA:**  
+                  $result
+
+                  [🔗 Ver finding no GitHub]($html_url)
+                  "
+
+                  comment_body=$(cat <<EOF
+                  ### 🤖 Análise Automática da TinyLlama
+
+                  **Finding #$number**  
+                  **Severidade:** $severity  
+                  **Caminho:** \`$location_path:$location_line\`  
+
+                  **Resultado da IA:**  
+                  $result
+
+                  [🔗 Ver finding no GitHub]($html_url)
+                  EOF
+                  )
+
+                  # Escapar com jq para evitar problemas de JSON malformado
+                  escaped_body=$(printf '%s' "$comment_body" | jq -Rs .)
+
+                  curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+                      -H "Content-Type: application/json" \
+                      -X POST \
+                      -d "{\"body\": $escaped_body}" \
+                      "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments"
+
+              
+            done
+          }
+
+          analyze_findings "code-scanning"
+          ( analyze_findings "secrets" ) || echo "⚠️ Erro ao analisar secrets.json"
+          ( analyze_findings "dependabot" ) || echo "⚠️ Erro ao analisar dependabot.json"
+
+      - name: Parar ambiente TinyLlama
+        run: |
+          docker stop ollama && docker rm ollama
