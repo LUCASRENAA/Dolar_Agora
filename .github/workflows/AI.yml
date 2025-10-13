@@ -128,18 +128,6 @@ jobs:
                 echo "🧠 Resultado da IA: $result"
                 # Se estiver rodando num Pull Request, comente a resposta da IA
                 if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-                  comment_body="### 🤖 Análise Automática da TinyLlama
-
-                  **Finding #$number**  
-                  **Severidade:** $severity  
-                  **Caminho:** \`$location_path:$location_line\`  
-
-                  **Resultado da IA:**  
-                  $result
-
-                  [🔗 Ver finding no GitHub]($html_url)
-                  "
-
                   comment_body=$(cat <<EOF
                   ### 🤖 Análise Automática da TinyLlama
 
@@ -162,8 +150,8 @@ jobs:
                       -X POST \
                       -d "{\"body\": $escaped_body}" \
                       "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments"
-
-              
+                fi
+              fi
             done
           }
 
