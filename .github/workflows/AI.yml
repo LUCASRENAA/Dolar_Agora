@@ -3,13 +3,11 @@ name: Analyze GitHub Security Findings
 on:
   push:
     branches:
-      - main
-      - Dev
+      - '*'
   pull_request_target:
     types: [opened, reopened, synchronize]
     branches:
-      - main
-      - Dev
+      - '*'
 
 permissions:
   contents: read
