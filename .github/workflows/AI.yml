@@ -141,7 +141,7 @@ jobs:
                   [🔗 Ver finding no GitHub]($html_url)
                   EOF
                   )
-                  )
+                  
                   # Escapar com jq para evitar problemas de JSON malformado
                   escaped_body=$(printf '%s' "$comment_body" | jq -Rs .)
 
