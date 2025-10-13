@@ -46,11 +46,11 @@ jobs:
 
       - name: Build Docker Image (caso necessário)
         run: |
-          docker-compose -f docker-compose.yml build
+          docker-compose -f docker-compose-lamma.yml build
 
       - name: Iniciar Containers
         run: |
-          docker-compose -f docker-compose.yml up -d
+          docker-compose -f docker-compose-lamma.yml up -d
           sudo docker exec ollama ollama pull tinyllama
 
       - name: Baixar findings de segurança
