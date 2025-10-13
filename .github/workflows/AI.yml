@@ -1,176 +1,214 @@
-name: Analyze GitHub Security Findings
+# Este workflow analisa os findings de Code Scanning do GitHub usando o modelo TinyLlama
+# rodando localmente em um container Ollama.
+name: Analisar Findings de Segurança com TinyLlama
 
 on:
-  push:
-    branches:
-      - '*'
+  # O 'pull_request_target' é usado para garantir que o GITHUB_TOKEN tenha permissões de escrita
+  # (pull-requests: write) necessárias para comentar no PR.
   pull_request_target:
     types: [opened, reopened, synchronize]
     branches:
       - '*'
+  # Adicione 'workflow_dispatch' para poder rodar manualmente para testes
+  workflow_dispatch:
 
 permissions:
+  # Necessário para ler o código (checkout) e os eventos de segurança
   contents: read
-  pull-requests: write
   security-events: read
+  # Necessário para comentar no Pull Request
+  pull-requests: write
 
 jobs:
   analyze-findings:
     name: Analisar Findings de Segurança com TinyLlama
+    # Usamos um runner ubuntu-latest que já vem com Docker pré-instalado
     runs-on: ubuntu-latest
-
+    
     steps:
+      # Etapa 1: Checkout do código do Pull Request
+      # Usamos o SHA do HEAD do PR para checkout, garantindo a segurança ao usar pull_request_target
       - name: Checkout repositório com segurança
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
+          # É crucial verificar o código que está sendo proposto
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 1
 
-      - name: Remover versões conflitantes do Docker
+      # Etapa 2: Instalar Ollama e TinyLlama em background
+      - name: Iniciar Ollama e Pull TinyLlama
+        # O docker-cli está disponível no runner. Iniciamos o Ollama expondo a porta 11434
         run: |
-          sudo apt-get remove --purge containerd containerd.io || true
-          sudo apt-get update
+          echo "🐳 Iniciando container Ollama em background..."
+          # Roda o Ollama em detached mode, expondo a porta 11434
+          docker run -d -v ollama:/root/.ollama -p 11434:11434 --name ollama ollama/ollama
+          
+          # Puxa o modelo TinyLlama. Isso pode levar um tempo.
+          echo "⬇️ Puxando modelo tinyllama..."
+          docker exec ollama ollama pull tinyllama
+          
+          # Espera um pouco para garantir que o serviço de API esteja ativo
+          echo "⏱️ Aguardando 15 segundos para o Ollama inicializar a API..."
+          sleep 15
+          
+          # Health check básico: verifica se o modelo está carregado (opcional, mas bom)
+          docker exec ollama ollama run tinyllama "Hello" || true
 
-      - name: Instalar Docker e Docker Compose
+      # Etapa 3: Baixar findings de Code Scanning
+      - name: Baixar findings de Code Scanning
+        id: download_findings
         run: |
-          sudo apt-get install -y apt-transport-https ca-certificates curl software-properties-common
-          curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
-          echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list
-          sudo apt-get update
-          sudo apt-get install -y docker-ce docker-ce-cli containerd.io
-          sudo curl -L "https://github.com/docker/compose/releases/download/$(curl -s https://api.github.com/repos/docker/compose/releases/latest | jq -r .tag_name)/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-          sudo chmod +x /usr/local/bin/docker-compose
-
-      - name: Configurar Docker
-        uses: docker/setup-buildx-action@v2
-
-      - name: Build Docker Image (caso necessário)
-        run: |
-          docker-compose -f docker-compose.yml build
-
-      - name: Iniciar Containers
-        run: |
-          docker-compose -f docker-compose.yml up -d
-          sudo docker exec ollama ollama pull tinyllama
-
-      - name: Baixar findings de segurança
-        run: |
+          # Cria o diretório para armazenar os JSONs
           mkdir -p findings
-
+          
+          # Baixa apenas os alerts de Code Scanning que são abertos (state=open)
+          # A lógica de parsing original é mais adequada para Code Scanning.
+          echo "📥 Baixando findings de Code Scanning..."
           curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-            https://api.github.com/repos/${{ github.repository }}/code-scanning/alerts \
+            "https://api.github.com/repos/${{ github.repository }}/code-scanning/alerts?state=open" \
             -o findings/code-scanning.json
+            
+          # Verifica se o arquivo foi baixado e se é um JSON válido. 
+          # Se o resultado for 403/404 ou um JSON vazio, o jq vai falhar, mas o script segue.
+          if ! jq . findings/code-scanning.json > /dev/null 2>&1; then
+              echo "[]" > findings/code-scanning.json
+              echo "⚠️ Erro ou resultado vazio/inválido ao baixar Code Scanning. Criando JSON vazio."
+          fi
 
-          curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-            https://api.github.com/repos/${{ github.repository }}/secret-scanning/alerts \
-            -o findings/secrets.json || echo "Erro ao baixar Secret Scanning"
-
-          curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-            https://api.github.com/repos/${{ github.repository }}/dependabot/alerts \
-            -o findings/dependabot.json || echo "Erro ao baixar Dependabot"
-
-      - name: Analisar findings com TinyLlama
+      # Etapa 4: Analisar findings com TinyLlama
+      - name: Analisar findings com TinyLlama e Comentar no PR
+        # Esta etapa requer 'jq' e 'curl' (já instalados no runner)
         run: |
           analyze_findings() {
-            local type="$1"
-            local file="findings/${type}.json"
+            local file="findings/code-scanning.json"
+            local type="Code Scanning"
+            
             echo "🔎 Analisando findings de ${type}..."
+            
+            # Conta o número de findings
             count=$(jq length "$file")
 
             if [ "$count" -eq 0 ]; then
               echo "✅ Nenhum finding de ${type} encontrado."
               return
             fi
-
+            
+            # Loop por cada finding encontrado
             for i in $(seq 0 $(($count - 1))); do
               finding=$(jq -r ".[$i]" "$file")
 
-              number=$(echo "$finding" | jq -r '.number')
-              created_at=$(echo "$finding" | jq -r '.created_at')
-              updated_at=$(echo "$finding" | jq -r '.updated_at')
-              description=$(echo "$finding" | jq -r '.rule.description')
-              severity=$(echo "$finding" | jq -r '.rule.severity')
-              location_path=$(echo "$finding" | jq -r '.most_recent_instance.location.path')
-              location_line=$(echo "$finding" | jq -r '.most_recent_instance.location.start_line')
-              message_text=$(echo "$finding" | jq -r '.most_recent_instance.message.text')
-              html_url=$(echo "$finding" | jq -r '.html_url')
-              help_uri=$(echo "$finding" | jq -r '.rule.help_uri')
-
-              prompt="A vulnerability was found in the repository. Below are the details:
+              # Extração de campos (ajustei para ser mais robusto com os caminhos do jq)
+              number=$(echo "$finding" | jq -r '.number // "N/A"')
+              created_at=$(echo "$finding" | jq -r '.created_at // "N/A"')
+              description=$(echo "$finding" | jq -r '.rule.description // "N/A"')
+              severity=$(echo "$finding" | jq -r '.rule.severity // "N/A"')
+              location_path=$(echo "$finding" | jq -r '.most_recent_instance.location.path // "N/A"')
+              location_line=$(echo "$finding" | jq -r '.most_recent_instance.location.start_line // "N/A"')
+              message_text=$(echo "$finding" | jq -r '.most_recent_instance.message.text // "N/A"')
+              html_url=$(echo "$finding" | jq -r '.html_url // "N/A"')
+              help_uri=$(echo "$finding" | jq -r '.rule.help_uri // "N/A"')
+              
+              # Monta o prompt
+              prompt="A vulnerability was found in the repository's Code Scanning. Below are the details:
 
               - Finding ID: $number
               - Created At: $created_at
-              - Updated At: $updated_at
               - Description: $description
               - Severity: $severity
               - File Path: $location_path
               - Line Number: $location_line
               - Message: $message_text
 
-              Do you consider this a false positive? Justify your answer briefly.
+              Do you consider this a false positive? Justify your answer briefly in Portuguese, focusing on the file and line number provided.
 
-              For reference, here is the rule documentation: $help_uri  
+              For reference, here is the rule documentation: $help_uri
               GitHub Finding Link: $html_url"
-
+              
+              # Escapa o prompt para ser um JSON string válido
               escaped_prompt=$(jq -Rs <<< "$prompt")
 
-              response=$(curl -s -X POST http://localhost:11399/api/generate \
-                -H "Content-Type: application/json" \
-                -d "{\"model\": \"tinyllama\", \"stream\": false, \"prompt\": $escaped_prompt}" || echo "erro")
+              # Tenta o curl, usando a porta padrão 11434
+              # Adiciona um retry simples com loop
+              MAX_RETRIES=3
+              for attempt in $(seq 1 $MAX_RETRIES); do
+                  echo "🔌 Tentativa $attempt de conexão com Ollama..."
+                  response=$(curl -s -X POST http://localhost:11434/api/generate \
+                    -H "Content-Type: application/json" \
+                    -d "{\"model\": \"tinyllama\", \"stream\": false, \"prompt\": $escaped_prompt}" \
+                    --write-out "%{http_code}" \
+                    --output response.json)
+                  
+                  HTTP_CODE="${response: -3}"
+                  
+                  if [ "$HTTP_CODE" -eq 200 ]; then
+                      echo "✅ Sucesso na conexão com Ollama."
+                      break
+                  fi
+                  
+                  echo "❌ Ollama retornou código HTTP $HTTP_CODE. Tentando novamente em 5 segundos..."
+                  sleep 5
+                  
+                  if [ "$attempt" -eq "$MAX_RETRIES" ]; then
+                      echo "🚨 Falha ao conectar ao Ollama após $MAX_RETRIES tentativas."
+                      result="Não foi possível obter a análise da IA devido a falha de conexão com o TinyLlama."
+                      break
+                  fi
+              done
 
-              result=$(echo "$response" | jq -r '.response // .error')
+              # Se o curl foi bem-sucedido (código 200), extrai a resposta
+              if [ "$HTTP_CODE" -eq 200 ]; then
+                  result=$(jq -r '.response // .error // "Resposta da IA em formato inesperado."' response.json)
+              fi
 
-              if [ "$result" == "null" ] || [ "$result" == "erro" ]; then
-                echo "⚠️ Erro na resposta da IA: $response"
+              echo "🧠 Resultado da IA para Finding #$number: $result"
+              
+              # Comenta no Pull Request
+              if [[ "${{ github.event_name }}" == "pull_request_target" ]]; then
+                # Usa um bloco EOF para montar o corpo do comentário em Markdown
+                comment_body=$(cat <<EOF
+                ### 🤖 Análise Automática da TinyLlama (Code Scanning)
+
+                **Finding ID:** #$number
+                **Severidade:** $severity
+                **Caminho:** \`$location_path:$location_line\`
+
+                **Descrição do Finding:**
+                > $description
+
+                **Resultado da IA:**
+                \`\`\`
+                $result
+                \`\`\`
+
+                [🔗 Ver finding no GitHub]($html_url)
+                EOF
+                                )
+
+                # Escapa o corpo do comentário para ser injetado no payload JSON do GitHub API
+                escaped_body=$(printf '%s' "$comment_body" | jq -Rs .)
+
+                # Envia o comentário para o Pull Request
+                curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+                    -H "Content-Type: application/json" \
+                    -X POST \
+                    -d "{\"body\": $escaped_body}" \
+                    "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments"
+                
+                echo "📝 Comentário postado no PR #${{ github.event.pull_request.number }}"
+
               else
-                echo "🔍 Exibindo conteúdo do PR Diff:"
-                cat pr.diff  # Exibe o conteúdo do diff para diagnóstico
-                echo "🧠 Resultado da IA: $result"
-                # Se estiver rodando num Pull Request, comente a resposta da IA
-                if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-                  comment_body="### 🤖 Análise Automática da TinyLlama
-
-                  **Finding #$number**  
-                  **Severidade:** $severity  
-                  **Caminho:** \`$location_path:$location_line\`  
-
-                  **Resultado da IA:**  
-                  $result
-
-                  [🔗 Ver finding no GitHub]($html_url)
-                  "
-
-                  comment_body=$(cat <<EOF
-                  ### 🤖 Análise Automática da TinyLlama
-
-                  **Finding #$number**  
-                  **Severidade:** $severity  
-                  **Caminho:** \`$location_path:$location_line\`  
-
-                  **Resultado da IA:**  
-                  $result
-
-                  [🔗 Ver finding no GitHub]($html_url)
-                  EOF
-                  )
-
-                  # Escapar com jq para evitar problemas de JSON malformado
-                  escaped_body=$(printf '%s' "$comment_body" | jq -Rs .)
-
-                  curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-                      -H "Content-Type: application/json" \
-                      -X POST \
-                      -d "{\"body\": $escaped_body}" \
-                      "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments"
-
+                echo "⏭️ Ignorando postagem de comentário. O workflow não está rodando em um evento pull_request_target."
+              fi
               
             done
           }
 
-          analyze_findings "code-scanning"
-          ( analyze_findings "secrets" ) || echo "⚠️ Erro ao analisar secrets.json"
-          ( analyze_findings "dependabot" ) || echo "⚠️ Erro ao analisar dependabot.json"
+          analyze_findings
 
-      - name: Parar ambiente TinyLlama
+      # Etapa 5: Limpar o ambiente Ollama
+      - name: Parar e remover ambiente TinyLlama
+        if: always()
         run: |
-          docker stop ollama && docker rm ollama
+          echo "🛑 Parando e removendo container Ollama..."
+          docker stop ollama || true
+          docker rm ollama || true
