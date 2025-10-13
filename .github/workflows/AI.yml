@@ -30,7 +30,7 @@ jobs:
       # Usamos o SHA do HEAD do PR para checkout, garantindo a segurança ao usar pull_request_target
       - name: Checkout repositório com segurança
         uses: actions/checkout@v4
-        with
+        with:  # CORREÇÃO: Adicionando os dois pontos (:)
           # É crucial verificar o código que está sendo proposto
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 1
