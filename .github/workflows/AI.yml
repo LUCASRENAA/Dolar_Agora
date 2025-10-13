@@ -140,19 +140,21 @@ jobs:
                   [🔗 Ver finding no GitHub]($html_url)
                   "
 
+           
                   comment_body=$(cat <<EOF
                   ### 🤖 Análise Automática da TinyLlama
-
+                  
                   **Finding #$number**  
                   **Severidade:** $severity  
                   **Caminho:** \`$location_path:$location_line\`  
-
+                  
                   **Resultado da IA:**  
                   $result
-
+                  
                   [🔗 Ver finding no GitHub]($html_url)
                   EOF
                   )
+            
 
                   # Escapar com jq para evitar problemas de JSON malformado
                   escaped_body=$(printf '%s' "$comment_body" | jq -Rs .)
@@ -173,4 +175,4 @@ jobs:
 
       - name: Parar ambiente TinyLlama
         run: |
-          docker stop ollama && docker rm ollama
+          docker stop ollama && docker rm ollama          
