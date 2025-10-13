@@ -126,7 +126,7 @@ jobs:
                 echo "🔍 Exibindo conteúdo do PR Diff:"
                 cat pr.diff  # Exibe o conteúdo do diff para diagnóstico
                 echo "🧠 Resultado da IA: $result"
-          
+          }
 
           analyze_findings "code-scanning"
           ( analyze_findings "secrets" ) || echo "⚠️ Erro ao analisar secrets.json"
